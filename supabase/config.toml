@@ -1,0 +1,7 @@
+project_id = "educonnect"
+
+[functions.study-ai]
+verify_jwt = true
+
+[functions.admin-provision-user]
+verify_jwt = true
