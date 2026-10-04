@@ -17,9 +17,7 @@ returns boolean language sql stable security definer set search_path=public as $
 $$;
 
 grant execute on function public.teacher_has_assignment(uuid,uuid,uuid) to authenticated;
-
-alter table public.attendance add column if not exists attendance_key text generated always as (student_id::text || ':' || date::text || ':' || coalesce(subject_id::text,'daily')) stored;
-create unique index if not exists attendance_key_unique on public.attendance(attendance_key);
+;
 
 -- Replace broad tenant-select policies for records whose audience depends on role/class.
 drop policy if exists homework_tenant_select on public.homework;
