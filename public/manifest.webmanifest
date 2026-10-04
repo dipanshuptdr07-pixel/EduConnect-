@@ -1,0 +1,13 @@
+{
+  "name": "EduConnect",
+  "short_name": "EduConnect",
+  "description": "Modern school management for students, teachers and administrators.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f8ff",
+  "theme_color": "#1769e8",
+  "icons": [
+    {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
