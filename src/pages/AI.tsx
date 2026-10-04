@@ -21,7 +21,7 @@ export default function AI(){
   setError('');
   try{
    const r=await invokeStudyAI(next);
-   setMessages([...next,{role:'assistant',content:r.message}]);
+   setMessages([...next,{role:'assistant',content:r.answer}]);
   }catch(e){
    setError('Study AI is not configured on the server yet. Add an AI provider key to the Edge Function environment; the app never stores the key in the browser.');
   }finally{
