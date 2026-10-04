@@ -1,0 +1,1 @@
+export function Logo({compact=false}:{compact?:boolean}){return <div className="brand"><img src="/icons/icon.svg" alt="EduConnect"/><div className={compact?'brand-word compact':'brand-word'}><strong><span>Edu</span>Connect</strong>{!compact&&<small>LEARN · CONNECT · GROW</small>}</div></div>}
