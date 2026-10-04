@@ -36,7 +36,7 @@ export async function table<T>(
 export async function insert<T>(name: string, payload: Partial<T>) {
   const { data, error } = await supabase
     .from(name)
-    .insert(payload)
+    .insert(payload as Record<string, unknown>)
     .select()
     .single();
 
