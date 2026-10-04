@@ -45,13 +45,14 @@ export async function insert<T>(name: string, payload: Partial<T>) {
 }
 
 export async function update<T>(
+export async function update<T>(
   name: string,
   id: string,
   payload: Partial<T>
 ) {
   const { data, error } = await supabase
     .from(name)
-    .update(payload)
+    .update(payload as Record<string, unknown>)
     .eq('id', id)
     .select()
     .single();
