@@ -9,8 +9,7 @@ import {
 
 import {
   supabase,
-  supabaseConfigured,
-  normalizePhone
+  supabaseConfigured
 } from '../lib/supabase';
 
 import {
@@ -36,16 +35,22 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null);
+const AuthContext =
+  createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({
   children
 }: {
   children: ReactNode;
 }) {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [school, setSchool] = useState<School | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] =
+    useState<Profile | null>(null);
+
+  const [school, setSchool] =
+    useState<School | null>(null);
+
+  const [loading, setLoading] =
+    useState(true);
 
   useEffect(() => {
     let alive = true;
@@ -68,12 +73,18 @@ export function AuthProvider({
 
           if (alive) {
             setProfile(p);
+
             setSchool(
-              p ? await getMySchool(p.school_id) : null
+              p
+                ? await getMySchool(p.school_id)
+                : null
             );
           }
-        } catch (e) {
-          console.error(e);
+        } catch (error) {
+          console.error(
+            'Failed to restore session:',
+            error
+          );
         }
       }
 
@@ -97,11 +108,17 @@ export function AuthProvider({
           const p = await getMyProfile();
 
           setProfile(p);
+
           setSchool(
-            p ? await getMySchool(p.school_id) : null
+            p
+              ? await getMySchool(p.school_id)
+              : null
           );
-        } catch (e) {
-          console.error(e);
+        } catch (error) {
+          console.error(
+            'Failed to load profile:',
+            error
+          );
         } finally {
           setLoading(false);
         }
@@ -126,22 +143,66 @@ export function AuthProvider({
         phone: string,
         password: string
       ) => {
-        const { data, error } = await supabase.rpc(
-          'resolve_school_code',
+        const code =
+          schoolCode.trim().toUpperCase();
+
+        const cleanPhone =
+          phone.trim();
+
+        if (!code) {
+          throw new Error(
+            'School code is required.'
+          );
+        }
+
+        if (!cleanPhone) {
+          throw new Error(
+            'Phone number is required.'
+          );
+        }
+
+        if (!password) {
+          throw new Error(
+            'Password is required.'
+          );
+        }
+
+        const {
+          data: email,
+          error: resolveError
+        } = await supabase.rpc(
+          'resolve_login_email',
           {
-            p_code: schoolCode.toUpperCase()
+            p_code: code,
+            p_phone: cleanPhone
           }
         );
 
-        if (error || !data) {
-          throw new Error('Invalid school code.');
+        if (resolveError) {
+          console.error(
+            'Login identity error:',
+            resolveError
+          );
+
+          throw new Error(
+            'Unable to verify school login.'
+          );
         }
 
-        const { error: authError } =
-          await supabase.auth.signInWithPassword({
-            phone: normalizePhone(phone),
+        if (!email) {
+          throw new Error(
+            'Invalid school code or phone number.'
+          );
+        }
+
+        const {
+          error: authError
+        } = await supabase.auth.signInWithPassword(
+          {
+            email: email as string,
             password
-          });
+          }
+        );
 
         if (authError) {
           throw authError;
@@ -150,6 +211,7 @@ export function AuthProvider({
 
       signOut: async () => {
         await supabase.auth.signOut();
+
         setProfile(null);
         setSchool(null);
       }
@@ -165,7 +227,8 @@ export function AuthProvider({
 }
 
 export const useAuth = () => {
-  const value = useContext(AuthContext);
+  const value =
+    useContext(AuthContext);
 
   if (!value) {
     throw new Error(
