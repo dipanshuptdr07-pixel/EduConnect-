@@ -2,14 +2,23 @@ import { supabase } from './supabase';
 import type { Profile, School } from './types';
 
 export async function getMyProfile(): Promise<Profile | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return null;
+  }
+
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
-    .single();
+    .eq('id', user.id)
+    .maybeSingle();
 
   if (error) throw error;
 
-  return data as Profile;
+  return data as Profile | null;
 }
 
 export async function getMySchool(
@@ -41,7 +50,7 @@ export async function table<T>(
 
   if (options.order) {
     query = query.order(options.order, {
-      ascending: options.ascending ?? false
+      ascending: options.ascending ?? false,
     });
   }
 
@@ -138,7 +147,7 @@ export async function invokeStudyAI(
 
   const { data, error } =
     await supabase.functions.invoke('study-ai', {
-      body: { question }
+      body: { question },
     });
 
   if (error) throw error;
