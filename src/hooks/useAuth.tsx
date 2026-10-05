@@ -38,6 +38,43 @@ interface AuthContextValue {
 const AuthContext =
   createContext<AuthContextValue | null>(null);
 
+async function loadAuthenticatedUser() {
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error(
+      'AUTH_SESSION_NOT_FOUND'
+    );
+  }
+
+  const profile =
+    await getMyProfile();
+
+  if (!profile) {
+    throw new Error(
+      'PROFILE_NOT_FOUND'
+    );
+  }
+
+  if (!profile.is_active) {
+    throw new Error(
+      'PROFILE_INACTIVE'
+    );
+  }
+
+  const school =
+    await getMySchool(
+      profile.school_id
+    );
+
+  return {
+    profile,
+    school
+  };
+}
+
 export function AuthProvider({
   children
 }: {
@@ -53,101 +90,83 @@ export function AuthProvider({
     useState(true);
 
   useEffect(() => {
-    let alive = true;
+    let mounted = true;
 
-    (async () => {
-      if (!supabaseConfigured) {
-        if (alive) {
-          setLoading(false);
+    const restoreSession =
+      async () => {
+        if (!supabaseConfigured) {
+          if (mounted) {
+            setLoading(false);
+          }
+          return;
         }
-        return;
-      }
 
-      const {
-        data: { session }
-      } = await supabase.auth.getSession();
-
-      if (session?.user) {
         try {
-          const p =
-            await getMyProfile();
+          const {
+            data: {
+              session
+            }
+          } =
+            await supabase.auth.getSession();
 
-          if (alive) {
-            setProfile(p);
-
-            if (p) {
-              const s =
-                await getMySchool(
-                  p.school_id
-                );
-
-              setSchool(s);
-            } else {
+          if (!session) {
+            if (mounted) {
+              setProfile(null);
               setSchool(null);
             }
-          }
-        } catch (error) {
-          console.error(
-            'Failed to restore session:',
-            error
-          );
-
-          if (alive) {
-            setProfile(null);
-            setSchool(null);
-          }
-        }
-      }
-
-      if (alive) {
-        setLoading(false);
-      }
-    })();
-
-    const {
-      data: { subscription }
-    } =
-      supabase.auth.onAuthStateChange(
-        async (_event, session) => {
-          if (!session) {
-            setProfile(null);
-            setSchool(null);
-            setLoading(false);
             return;
           }
 
-          try {
-            const p =
-              await getMyProfile();
+          const result =
+            await loadAuthenticatedUser();
 
-            setProfile(p);
-
-            if (p) {
-              const s =
-                await getMySchool(
-                  p.school_id
-                );
-
-              setSchool(s);
-            } else {
-              setSchool(null);
-            }
-          } catch (error) {
-            console.error(
-              'Failed to load profile:',
-              error
+          if (mounted) {
+            setProfile(
+              result.profile
             );
+            setSchool(
+              result.school
+            );
+          }
+        } catch (error) {
+          console.error(
+            'Session restore failed:',
+            error
+          );
 
+          if (mounted) {
             setProfile(null);
             setSchool(null);
-          } finally {
+          }
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
+        }
+      };
+
+    restoreSession();
+
+    const {
+      data: {
+        subscription
+      }
+    } =
+      supabase.auth.onAuthStateChange(
+        (event, session) => {
+          if (
+            event === 'SIGNED_OUT' ||
+            !session
+          ) {
+            setProfile(null);
+            setSchool(null);
             setLoading(false);
           }
         }
       );
 
     return () => {
-      alive = false;
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
@@ -192,92 +211,102 @@ export function AuthProvider({
             );
           }
 
-          const {
-            data: email,
-            error: resolveError
-          } =
-            await supabase.rpc(
-              'resolve_login_email',
-              {
-                p_code: code,
-                p_phone: cleanPhone
-              }
+          setLoading(true);
+
+          try {
+            const {
+              data: email,
+              error:
+                resolveError
+            } =
+              await supabase.rpc(
+                'resolve_login_email',
+                {
+                  p_code: code,
+                  p_phone:
+                    cleanPhone
+                }
+              );
+
+            if (resolveError) {
+              console.error(
+                'IDENTITY_RESOLUTION_FAILED:',
+                resolveError
+              );
+
+              throw new Error(
+                'IDENTITY_RESOLUTION_FAILED'
+              );
+            }
+
+            if (!email) {
+              throw new Error(
+                'INVALID_SCHOOL_OR_PHONE'
+              );
+            }
+
+            const {
+              data,
+              error:
+                authError
+            } =
+              await supabase.auth
+                .signInWithPassword({
+                  email:
+                    email as string,
+                  password
+                });
+
+            if (authError) {
+              console.error(
+                'AUTHENTICATION_FAILED:',
+                authError
+              );
+
+              throw authError;
+            }
+
+            if (!data.user) {
+              throw new Error(
+                'AUTH_SESSION_NOT_FOUND'
+              );
+            }
+
+            const result =
+              await loadAuthenticatedUser();
+
+            setProfile(
+              result.profile
             );
 
-          if (resolveError) {
+            setSchool(
+              result.school
+            );
+          } catch (error) {
             console.error(
-              'Login identity error:',
-              resolveError
+              'SIGN_IN_FAILED:',
+              error
             );
 
-            throw new Error(
-              'Unable to verify school login.'
-            );
-          }
-
-          if (!email) {
-            throw new Error(
-              'Invalid school code or phone number.'
-            );
-          }
-
-          const {
-            data,
-            error: authError
-          } =
             await supabase.auth
-              .signInWithPassword({
-                email:
-                  email as string,
-                password
-              });
+              .signOut()
+              .catch(() => {});
 
-          if (authError) {
-            throw authError;
-          }
+            setProfile(null);
+            setSchool(null);
 
-          if (!data.user) {
-            throw new Error(
-              'Login succeeded but user session was not created.'
-            );
-          }
-
-          /*
-           * IMPORTANT:
-           * Load profile and school BEFORE
-           * signIn() resolves.
-           *
-           * This prevents the router from
-           * redirecting back to /login before
-           * profile state is ready.
-           */
-          const p =
-            await getMyProfile();
-
-          if (!p) {
-            await supabase.auth.signOut();
+            if (
+              error instanceof Error
+            ) {
+              throw error;
+            }
 
             throw new Error(
-              'Login account is not linked to an EduConnect profile.'
+              'LOGIN_FAILED'
             );
+          } finally {
+            setLoading(false);
           }
-
-          if (!p.is_active) {
-            await supabase.auth.signOut();
-
-            throw new Error(
-              'This EduConnect account is inactive.'
-            );
-          }
-
-          const s =
-            await getMySchool(
-              p.school_id
-            );
-
-          setProfile(p);
-          setSchool(s);
-          setLoading(false);
         },
 
         signOut: async () => {
@@ -287,7 +316,11 @@ export function AuthProvider({
           setSchool(null);
         }
       }),
-      [profile, school, loading]
+      [
+        profile,
+        school,
+        loading
+      ]
     );
 
   return (
