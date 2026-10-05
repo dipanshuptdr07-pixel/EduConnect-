@@ -38,29 +38,43 @@ interface AuthContextValue {
 const AuthContext =
   createContext<AuthContextValue | null>(null);
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name;
+  }
+
+  if (
+    typeof error === 'object' &&
+    error !== null
+  ) {
+    const e = error as Record<string, unknown>;
+
+    return [
+      e.message,
+      e.code,
+      e.details,
+      e.hint
+    ]
+      .filter(Boolean)
+      .join(' | ');
+  }
+
+  return String(error);
+}
+
 async function loadAuthenticatedUser() {
-  let user;
+  const {
+    data: userData,
+    error: userError
+  } = await supabase.auth.getUser();
 
-  try {
-    const result =
-      await supabase.auth.getUser();
-
-    user = result.data.user;
-
-    if (result.error) {
-      throw new Error(
-        `AUTH_USER_QUERY_FAILED: ${result.error.message}`
-      );
-    }
-  } catch (error) {
-    if (error instanceof Error) {
-      throw error;
-    }
-
+  if (userError) {
     throw new Error(
-      'AUTH_USER_QUERY_FAILED'
+      `AUTH_USER_QUERY_FAILED: ${errorMessage(userError)}`
     );
   }
+
+  const user = userData.user;
 
   if (!user) {
     throw new Error(
@@ -71,22 +85,15 @@ async function loadAuthenticatedUser() {
   let profile: Profile | null;
 
   try {
-    profile =
-      await getMyProfile();
+    profile = await getMyProfile();
   } catch (error) {
     console.error(
-      'PROFILE_QUERY_FAILED:',
+      'PROFILE_QUERY_RAW_ERROR:',
       error
     );
 
-    if (error instanceof Error) {
-      throw new Error(
-        `PROFILE_QUERY_FAILED: ${error.message}`
-      );
-    }
-
     throw new Error(
-      'PROFILE_QUERY_FAILED'
+      `PROFILE_QUERY_FAILED: ${errorMessage(error)}`
     );
   }
 
@@ -111,24 +118,12 @@ async function loadAuthenticatedUser() {
       );
   } catch (error) {
     console.error(
-      'SCHOOL_QUERY_FAILED:',
+      'SCHOOL_QUERY_RAW_ERROR:',
       error
     );
 
-    if (error instanceof Error) {
-      throw new Error(
-        `SCHOOL_QUERY_FAILED: ${error.message}`
-      );
-    }
-
     throw new Error(
-      'SCHOOL_QUERY_FAILED'
-    );
-  }
-
-  if (!school) {
-    throw new Error(
-      `SCHOOL_NOT_FOUND: ${profile.school_id}`
+      `SCHOOL_QUERY_FAILED: ${errorMessage(error)}`
     );
   }
 
@@ -155,68 +150,56 @@ export function AuthProvider({
   useEffect(() => {
     let mounted = true;
 
-    const restoreSession =
-      async () => {
-        if (!supabaseConfigured) {
-          if (mounted) {
-            setLoading(false);
-          }
-
-          return;
+    const restoreSession = async () => {
+      if (!supabaseConfigured) {
+        if (mounted) {
+          setLoading(false);
         }
+        return;
+      }
 
-        try {
-          const {
-            data: {
-              session
-            }
-          } =
-            await supabase.auth.getSession();
+      try {
+        const {
+          data: { session }
+        } =
+          await supabase.auth.getSession();
 
-          if (!session) {
-            if (mounted) {
-              setProfile(null);
-              setSchool(null);
-            }
-
-            return;
-          }
-
-          const result =
-            await loadAuthenticatedUser();
-
-          if (mounted) {
-            setProfile(
-              result.profile
-            );
-
-            setSchool(
-              result.school
-            );
-          }
-        } catch (error) {
-          console.error(
-            'SESSION_RESTORE_FAILED:',
-            error
-          );
-
+        if (!session) {
           if (mounted) {
             setProfile(null);
             setSchool(null);
           }
-        } finally {
-          if (mounted) {
-            setLoading(false);
-          }
+          return;
         }
-      };
+
+        const result =
+          await loadAuthenticatedUser();
+
+        if (mounted) {
+          setProfile(result.profile);
+          setSchool(result.school);
+        }
+      } catch (error) {
+        console.error(
+          'SESSION_RESTORE_FAILED:',
+          error
+        );
+
+        if (mounted) {
+          setProfile(null);
+          setSchool(null);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
 
     restoreSession();
 
     const {
-      data: {
-        subscription
-      }
+      data: { subscription }
     } =
       supabase.auth.onAuthStateChange(
         (event, session) => {
@@ -280,48 +263,22 @@ export function AuthProvider({
           setLoading(true);
 
           try {
-            /* STEP 1 — Resolve school + phone */
-            let email: string | null =
-              null;
-
-            try {
-              const {
-                data,
-                error
-              } =
-                await supabase.rpc(
-                  'resolve_login_email',
-                  {
-                    p_code: code,
-                    p_phone:
-                      cleanPhone
-                  }
-                );
-
-              if (error) {
-                throw new Error(
-                  error.message
-                );
-              }
-
-              email =
-                data as string | null;
-            } catch (error) {
-              console.error(
-                'IDENTITY_RESOLUTION_FAILED:',
-                error
+            /* 1. Resolve School + Phone */
+            const {
+              data: email,
+              error: resolverError
+            } =
+              await supabase.rpc(
+                'resolve_login_email',
+                {
+                  p_code: code,
+                  p_phone: cleanPhone
+                }
               );
 
-              if (
-                error instanceof Error
-              ) {
-                throw new Error(
-                  `IDENTITY_RESOLUTION_FAILED: ${error.message}`
-                );
-              }
-
+            if (resolverError) {
               throw new Error(
-                'IDENTITY_RESOLUTION_FAILED'
+                `IDENTITY_RESOLUTION_FAILED: ${errorMessage(resolverError)}`
               );
             }
 
@@ -331,64 +288,35 @@ export function AuthProvider({
               );
             }
 
-            /* STEP 2 — Supabase password authentication */
-            let authUser;
+            /* 2. Password authentication */
+            const {
+              data: authData,
+              error: authError
+            } =
+              await supabase.auth
+                .signInWithPassword({
+                  email,
+                  password
+                });
 
-            try {
-              const {
-                data,
-                error
-              } =
-                await supabase.auth
-                  .signInWithPassword({
-                    email,
-                    password
-                  });
-
-              if (error) {
-                throw new Error(
-                  error.message
-                );
-              }
-
-              authUser =
-                data.user;
-            } catch (error) {
-              console.error(
-                'AUTHENTICATION_FAILED:',
-                error
-              );
-
-              if (
-                error instanceof Error
-              ) {
-                throw new Error(
-                  `AUTHENTICATION_FAILED: ${error.message}`
-                );
-              }
-
+            if (authError) {
               throw new Error(
-                'AUTHENTICATION_FAILED'
+                `AUTHENTICATION_FAILED: ${errorMessage(authError)}`
               );
             }
 
-            if (!authUser) {
+            if (!authData.user) {
               throw new Error(
                 'AUTH_SESSION_NOT_FOUND'
               );
             }
 
-            /* STEP 3 — Load profile + school */
+            /* 3. Profile + School */
             const result =
               await loadAuthenticatedUser();
 
-            setProfile(
-              result.profile
-            );
-
-            setSchool(
-              result.school
-            );
+            setProfile(result.profile);
+            setSchool(result.school);
           } catch (error) {
             console.error(
               'SIGN_IN_FAILED:',
@@ -402,14 +330,8 @@ export function AuthProvider({
             setProfile(null);
             setSchool(null);
 
-            if (
-              error instanceof Error
-            ) {
-              throw error;
-            }
-
             throw new Error(
-              'LOGIN_FAILED_UNKNOWN_ERROR'
+              errorMessage(error)
             );
           } finally {
             setLoading(false);
@@ -418,7 +340,6 @@ export function AuthProvider({
 
         signOut: async () => {
           await supabase.auth.signOut();
-
           setProfile(null);
           setSchool(null);
         }
