@@ -23,10 +23,8 @@ export default function App() {
   const { user, owner, profile, loading } = useAuth();
 
   const [theme, setTheme] = useState<'light' | 'dark'>(
-    () =>
-      (localStorage.getItem('educonnect-theme') as
-        | 'light'
-        | 'dark') || 'light',
+    (localStorage.getItem('educonnect-theme') as 'light' | 'dark') ||
+      'light',
   );
 
   const [lang, setLang] = useState<Language>(
@@ -86,11 +84,88 @@ export default function App() {
   }
 
   return (
-    <AppShell
-      theme={theme}
-      setTheme={setTheme}
-      lang={lang}
-      setLang={setLang}
-    />
+    <Routes>
+      <Route
+        element={
+          <AppShell
+            theme={theme}
+            setTheme={setTheme}
+            lang={lang}
+            setLang={setLang}
+          />
+        }
+      >
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/homework" element={<Homework />} />
+        <Route path="/attendance" element={<Attendance />} />
+
+        <Route
+          path="/exams"
+          element={<GenericModule kind="exams" />}
+        />
+
+        <Route
+          path="/results"
+          element={<GenericModule kind="results" />}
+        />
+
+        <Route
+          path="/fees"
+          element={<GenericModule kind="fees" />}
+        />
+
+        <Route path="/leave" element={<Leave />} />
+
+        <Route
+          path="/events"
+          element={<GenericModule kind="events" />}
+        />
+
+        <Route
+          path="/ptm"
+          element={<GenericModule kind="ptm" />}
+        />
+
+        <Route
+          path="/notifications"
+          element={<GenericModule kind="notifications" />}
+        />
+
+        <Route
+          path="/notices"
+          element={<GenericModule kind="notices" />}
+        />
+
+        <Route path="/ai" element={<AI />} />
+
+        <Route path="/profile" element={<Profile />} />
+
+        <Route path="/settings" element={<Settings />} />
+
+        {profile.role === 'ADMIN' && (
+          <>
+            <Route
+              path="/students"
+              element={<Roster kind="students" />}
+            />
+
+            <Route
+              path="/teachers"
+              element={<Roster kind="teachers" />}
+            />
+
+            <Route
+              path="/school-management"
+              element={<SchoolManagement />}
+            />
+          </>
+        )}
+
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+      </Route>
+    </Routes>
   );
 }
