@@ -1,8 +1,23 @@
 import { useEffect, useState } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+
 import { useAuth } from './hooks/useAuth';
+import { AppShell } from './components/AppShell';
+
 import Login from './pages/Login';
-import OwnerDashboard from './pages/OwnerDashboard';
 import Dashboard from './pages/Dashboard';
+import Homework from './pages/Homework';
+import Attendance from './pages/Attendance';
+import AI from './pages/AI';
+import Leave from './pages/Leave';
+import Profile from './pages/Profile';
+import Settings from './pages/Settings';
+import Roster from './pages/Roster';
+import SchoolManagement from './pages/SchoolManagement';
+import GenericModule from './pages/GenericModule';
+import OwnerDashboard from './pages/OwnerDashboard';
+
+import type { Language } from './lib/i18n';
 
 export default function App() {
   const {
@@ -10,16 +25,29 @@ export default function App() {
     owner,
     profile,
     loading,
-    signOut,
   } = useAuth();
 
-  const [authError, setAuthError] = useState('');
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () =>
+      (localStorage.getItem('educonnect-theme') as
+        | 'light'
+        | 'dark') || 'light',
+  );
+
+  const [lang, setLang] = useState<Language>(
+    (localStorage.getItem('educonnect-language') as Language) ||
+      'en',
+  );
 
   useEffect(() => {
-    if (!user) {
-      setAuthError('');
-    }
-  }, [user]);
+    document.documentElement.dataset.theme = theme;
+    document.body.classList.toggle('dark', theme === 'dark');
+    localStorage.setItem('educonnect-theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('educonnect-language', lang);
+  }, [lang]);
 
   if (loading) {
     return (
@@ -31,12 +59,7 @@ export default function App() {
           background: 'var(--background, #f6f8fc)',
         }}
       >
-        <div
-          style={{
-            textAlign: 'center',
-            padding: 24,
-          }}
-        >
+        <div style={{ textAlign: 'center', padding: 24 }}>
           <div
             style={{
               width: 42,
@@ -44,22 +67,19 @@ export default function App() {
               borderRadius: '50%',
               border: '4px solid #dbeafe',
               borderTopColor: '#2563eb',
-              animation: 'educonnect-spin 0.8s linear infinite',
+              animation:
+                'educonnect-spin .8s linear infinite',
               margin: '0 auto 14px',
             }}
           />
 
-          <div style={{ fontWeight: 800 }}>
-            Loading EduConnect...
-          </div>
+          <strong>Loading EduConnect...</strong>
         </div>
 
         <style>
           {`
             @keyframes educonnect-spin {
-              to {
-                transform: rotate(360deg);
-              }
+              to { transform: rotate(360deg); }
             }
           `}
         </style>
@@ -68,83 +88,148 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login />;
+    return (
+      <Routes>
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
   }
 
   if (owner) {
-    return <OwnerDashboard />;
+    return (
+      <Routes>
+        <Route
+          path="/"
+          element={<OwnerDashboard />}
+        />
+        <Route
+          path="/owner"
+          element={<OwnerDashboard />}
+        />
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+      </Routes>
+    );
   }
 
-  if (profile) {
-    return <Dashboard />;
+  if (!profile) {
+    return (
+      <Routes>
+        <Route
+          path="*"
+          element={
+            <div
+              style={{
+                minHeight: '100vh',
+                display: 'grid',
+                placeItems: 'center',
+                padding: 24,
+              }}
+            >
+              <div
+                style={{
+                  maxWidth: 420,
+                  width: '100%',
+                  padding: 28,
+                  borderRadius: 20,
+                  background: 'var(--card, #fff)',
+                  border:
+                    '1px solid var(--border, #e5e7eb)',
+                  textAlign: 'center',
+                }}
+              >
+                <h2>Profile not configured</h2>
+                <p>
+                  This account is authenticated but is not
+                  connected to an EduConnect profile.
+                </p>
+              </div>
+            </div>
+          }
+        />
+      </Routes>
+    );
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 24,
-        background: 'var(--background, #f6f8fc)',
-      }}
+    <AppShell
+      theme={theme}
+      setTheme={setTheme}
+      lang={lang}
+      setLang={setLang}
     >
-      <div
-        style={{
-          maxWidth: 460,
-          width: '100%',
-          padding: 28,
-          borderRadius: 20,
-          background: 'var(--card, #fff)',
-          border: '1px solid var(--border, #e5e7eb)',
-          textAlign: 'center',
-        }}
-      >
-        <h2 style={{ marginTop: 0 }}>
-          Account Setup Required
-        </h2>
+      <Routes>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/homework" element={<Homework />} />
+        <Route path="/attendance" element={<Attendance />} />
 
-        <p
-          style={{
-            color: 'var(--muted-foreground, #6b7280)',
-            lineHeight: 1.6,
-          }}
-        >
-          Your authentication account exists, but no EduConnect
-          profile is connected to it yet.
-        </p>
+        <Route
+          path="/exams"
+          element={<GenericModule kind="exams" />}
+        />
 
-        {authError && (
-          <p style={{ color: '#b91c1c' }}>
-            {authError}
-          </p>
+        <Route
+          path="/results"
+          element={<GenericModule kind="results" />}
+        />
+
+        <Route
+          path="/fees"
+          element={<GenericModule kind="fees" />}
+        />
+
+        <Route path="/leave" element={<Leave />} />
+
+        <Route
+          path="/events"
+          element={<GenericModule kind="events" />}
+        />
+
+        <Route
+          path="/ptm"
+          element={<GenericModule kind="ptm" />}
+        />
+
+        <Route
+          path="/notifications"
+          element={<GenericModule kind="notifications" />}
+        />
+
+        <Route
+          path="/notices"
+          element={<GenericModule kind="notices" />}
+        />
+
+        <Route path="/ai" element={<AI />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/settings" element={<Settings />} />
+
+        {profile.role === 'ADMIN' && (
+          <>
+            <Route
+              path="/students"
+              element={<Roster kind="students" />}
+            />
+
+            <Route
+              path="/teachers"
+              element={<Roster kind="teachers" />}
+            />
+
+            <Route
+              path="/school-management"
+              element={<SchoolManagement />}
+            />
+          </>
         )}
 
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              setAuthError('');
-              await signOut();
-            } catch (error: any) {
-              setAuthError(
-                error?.message || 'Could not sign out.',
-              );
-            }
-          }}
-          style={{
-            border: 0,
-            borderRadius: 10,
-            padding: '11px 18px',
-            background: '#2563eb',
-            color: '#fff',
-            fontWeight: 800,
-            cursor: 'pointer',
-          }}
-        >
-          Sign Out
-        </button>
-      </div>
-    </div>
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+      </Routes>
+    </AppShell>
   );
 }
