@@ -4,190 +4,129 @@ import {
   useEffect,
   useMemo,
   useState,
-  type ReactNode
+  type ReactNode,
 } from 'react';
-
-import {
-  supabase,
-  supabaseConfigured
-} from '../lib/supabase';
-
+import { supabase } from '../lib/supabase';
 import {
   getMyProfile,
-  getMySchool
+  getMySchool,
+  getPlatformOwner,
 } from '../lib/api';
-
-import type {
-  Profile,
-  School
-} from '../lib/types';
+import type { Profile, School, PlatformOwner, Role } from '../lib/types';
 
 interface AuthContextValue {
+  user: any | null;
   profile: Profile | null;
+  owner: PlatformOwner | null;
   school: School | null;
+  role: Role | null;
+  isOwner: boolean;
   loading: boolean;
-  configured: boolean;
-  signIn: (
+  signIn: (email: string, password: string) => Promise<void>;
+  signInWithLogin: (
     schoolCode: string,
     phone: string,
-    password: string
+    password: string,
   ) => Promise<void>;
   signOut: () => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
-const AuthContext =
-  createContext<AuthContextValue | null>(null);
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message || error.name;
-  }
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<any | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [owner, setOwner] = useState<PlatformOwner | null>(null);
+  const [school, setSchool] = useState<School | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  if (
-    typeof error === 'object' &&
-    error !== null
-  ) {
-    const e = error as Record<string, unknown>;
-
-    return [
-      e.message,
-      e.code,
-      e.details,
-      e.hint
-    ]
-      .filter(Boolean)
-      .join(' | ');
-  }
-
-  return String(error);
-}
-
-async function loadAuthenticatedUser() {
-  const {
-    data: userData,
-    error: userError
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    throw new Error(
-      `AUTH_USER_QUERY_FAILED: ${errorMessage(userError)}`
-    );
-  }
-
-  const user = userData.user;
-
-  if (!user) {
-    throw new Error(
-      'AUTH_SESSION_NOT_FOUND'
-    );
-  }
-
-  let profile: Profile | null;
-
-  try {
-    profile = await getMyProfile();
-  } catch (error) {
-    console.error(
-      'PROFILE_QUERY_RAW_ERROR:',
-      error
-    );
-
-    throw new Error(
-      `PROFILE_QUERY_FAILED: ${errorMessage(error)}`
-    );
-  }
-
-  if (!profile) {
-    throw new Error(
-      `PROFILE_NOT_FOUND: ${user.id}`
-    );
-  }
-
-  if (!profile.is_active) {
-    throw new Error(
-      'PROFILE_INACTIVE'
-    );
-  }
-
-  let school: School;
-
-  try {
-    school =
-      await getMySchool(
-        profile.school_id
-      );
-  } catch (error) {
-    console.error(
-      'SCHOOL_QUERY_RAW_ERROR:',
-      error
-    );
-
-    throw new Error(
-      `SCHOOL_QUERY_FAILED: ${errorMessage(error)}`
-    );
-  }
-
-  return {
-    profile,
-    school
+  const clearState = () => {
+    setUser(null);
+    setProfile(null);
+    setOwner(null);
+    setSchool(null);
   };
-}
 
-export function AuthProvider({
-  children
-}: {
-  children: ReactNode;
-}) {
-  const [profile, setProfile] =
-    useState<Profile | null>(null);
+  const loadIdentity = async (currentUser: any | null) => {
+    if (!currentUser) {
+      clearState();
+      return;
+    }
 
-  const [school, setSchool] =
-    useState<School | null>(null);
+    setUser(currentUser);
 
-  const [loading, setLoading] =
-    useState(true);
+    try {
+      const platformOwner = await getPlatformOwner();
+
+      if (platformOwner) {
+        setOwner(platformOwner);
+        setProfile(null);
+        setSchool(null);
+        return;
+      }
+
+      const currentProfile = await getMyProfile();
+
+      if (!currentProfile) {
+        setProfile(null);
+        setSchool(null);
+        setOwner(null);
+        return;
+      }
+
+      setOwner(null);
+      setProfile(currentProfile);
+
+      if (currentProfile.school_id) {
+        try {
+          const currentSchool = await getMySchool(currentProfile.school_id);
+          setSchool(currentSchool);
+        } catch {
+          setSchool(null);
+        }
+      } else {
+        setSchool(null);
+      }
+    } catch (error) {
+      console.error('Failed to load identity:', error);
+      setProfile(null);
+      setOwner(null);
+      setSchool(null);
+    }
+  };
+
+  const refresh = async () => {
+    setLoading(true);
+
+    try {
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser();
+
+      await loadIdentity(currentUser);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
 
-    const restoreSession = async () => {
-      if (!supabaseConfigured) {
-        if (mounted) {
-          setLoading(false);
-        }
-        return;
-      }
-
+    const initialise = async () => {
       try {
         const {
-          data: { session }
-        } =
-          await supabase.auth.getSession();
-
-        if (!session) {
-          if (mounted) {
-            setProfile(null);
-            setSchool(null);
-          }
-          return;
-        }
-
-        const result =
-          await loadAuthenticatedUser();
+          data: { session },
+        } = await supabase.auth.getSession();
 
         if (mounted) {
-          setProfile(result.profile);
-          setSchool(result.school);
+          await loadIdentity(session?.user ?? null);
         }
       } catch (error) {
-        console.error(
-          'SESSION_RESTORE_FAILED:',
-          error
-        );
+        console.error('Auth initialisation failed:', error);
 
         if (mounted) {
-          setProfile(null);
-          setSchool(null);
+          clearState();
         }
       } finally {
         if (mounted) {
@@ -196,23 +135,16 @@ export function AuthProvider({
       }
     };
 
-    restoreSession();
+    initialise();
 
     const {
-      data: { subscription }
-    } =
-      supabase.auth.onAuthStateChange(
-        (event, session) => {
-          if (
-            event === 'SIGNED_OUT' ||
-            !session
-          ) {
-            setProfile(null);
-            setSchool(null);
-            setLoading(false);
-          }
-        }
-      );
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
+
+      await loadIdentity(session?.user ?? null);
+      setLoading(false);
+    });
 
     return () => {
       mounted = false;
@@ -220,155 +152,97 @@ export function AuthProvider({
     };
   }, []);
 
-  const value =
-    useMemo<AuthContextValue>(
-      () => ({
-        profile,
-        school,
-        loading,
-        configured:
-          supabaseConfigured,
+  const signIn = async (email: string, password: string) => {
+    const cleanEmail = email.trim().toLowerCase();
 
-        signIn: async (
-          schoolCode,
-          phone,
-          password
-        ) => {
-          const code =
-            schoolCode
-              .trim()
-              .toUpperCase();
+    if (!cleanEmail || !password) {
+      throw new Error('Email and password are required.');
+    }
 
-          const cleanPhone =
-            phone.trim();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: cleanEmail,
+      password,
+    });
 
-          if (!code) {
-            throw new Error(
-              'School code is required.'
-            );
-          }
+    if (error) throw error;
 
-          if (!cleanPhone) {
-            throw new Error(
-              'Phone number is required.'
-            );
-          }
+    await loadIdentity(data.user);
+  };
 
-          if (!password) {
-            throw new Error(
-              'Password is required.'
-            );
-          }
+  const signInWithLogin = async (
+    schoolCode: string,
+    phone: string,
+    password: string,
+  ) => {
+    const code = schoolCode.trim().toUpperCase();
+    const cleanPhone = phone.trim();
 
-          setLoading(true);
+    if (!code || !cleanPhone || !password) {
+      throw new Error('School Code, phone number and password are required.');
+    }
 
-          try {
-            /* 1. Resolve School + Phone */
-            const {
-              data: email,
-              error: resolverError
-            } =
-              await supabase.rpc(
-                'resolve_login_email',
-                {
-                  p_code: code,
-                  p_phone: cleanPhone
-                }
-              );
+    const { data: resolvedEmail, error: resolverError } =
+      await supabase.rpc('resolve_login_email', {
+        p_code: code,
+        p_phone: cleanPhone,
+      });
 
-            if (resolverError) {
-              throw new Error(
-                `IDENTITY_RESOLUTION_FAILED: ${errorMessage(resolverError)}`
-              );
-            }
+    if (resolverError) {
+      throw resolverError;
+    }
 
-            if (!email) {
-              throw new Error(
-                'INVALID_SCHOOL_OR_PHONE'
-              );
-            }
+    if (!resolvedEmail) {
+      throw new Error(
+        'No active account found for this School Code and phone number.',
+      );
+    }
 
-            /* 2. Password authentication */
-            const {
-              data: authData,
-              error: authError
-            } =
-              await supabase.auth
-                .signInWithPassword({
-                  email,
-                  password
-                });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: resolvedEmail,
+      password,
+    });
 
-            if (authError) {
-              throw new Error(
-                `AUTHENTICATION_FAILED: ${errorMessage(authError)}`
-              );
-            }
+    if (error) throw error;
 
-            if (!authData.user) {
-              throw new Error(
-                'AUTH_SESSION_NOT_FOUND'
-              );
-            }
+    await loadIdentity(data.user);
+  };
 
-            /* 3. Profile + School */
-            const result =
-              await loadAuthenticatedUser();
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
 
-            setProfile(result.profile);
-            setSchool(result.school);
-          } catch (error) {
-            console.error(
-              'SIGN_IN_FAILED:',
-              error
-            );
+    if (error) throw error;
 
-            await supabase.auth
-              .signOut()
-              .catch(() => {});
+    clearState();
+  };
 
-            setProfile(null);
-            setSchool(null);
-
-            throw new Error(
-              errorMessage(error)
-            );
-          } finally {
-            setLoading(false);
-          }
-        },
-
-        signOut: async () => {
-          await supabase.auth.signOut();
-          setProfile(null);
-          setSchool(null);
-        }
-      }),
-      [
-        profile,
-        school,
-        loading
-      ]
-    );
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      profile,
+      owner,
+      school,
+      role: profile?.role ?? null,
+      isOwner: Boolean(owner),
+      loading,
+      signIn,
+      signInWithLogin,
+      signOut,
+      refresh,
+    }),
+    [user, profile, owner, school, loading],
+  );
 
   return (
-    <AuthContext.Provider
-      value={value}
-    >
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
   );
 }
 
-export const useAuth = () => {
-  const value =
-    useContext(AuthContext);
+export function useAuth() {
+  const context = useContext(AuthContext);
 
-  if (!value) {
-    throw new Error(
-      'useAuth must be inside AuthProvider'
-    );
+  if (!context) {
+    throw new Error('useAuth must be used inside AuthProvider.');
   }
 
-  return value;
-};
+  return context;
+                                        }
