@@ -1,12 +1,31 @@
 export type Language = 'en' | 'hi';
 
-export const translations = {
+type TranslationKey =
+  | 'home'
+  | 'homework'
+  | 'attendance'
+  | 'exams'
+  | 'results'
+  | 'fees'
+  | 'leave'
+  | 'events'
+  | 'ptm'
+  | 'notifications'
+  | 'notices'
+  | 'ai'
+  | 'profile'
+  | 'settings'
+  | 'students'
+  | 'teachers'
+  | 'schoolManagement'
+  | 'logout';
+
+const translations: Record<
+  Language,
+  Record<TranslationKey, string>
+> = {
   en: {
     home: 'Home',
-    academics: 'Academics',
-    notifications: 'Notifications',
-    ai: 'Study AI',
-    profile: 'Profile',
     homework: 'Homework',
     attendance: 'Attendance',
     exams: 'Exams',
@@ -15,24 +34,19 @@ export const translations = {
     leave: 'Leave',
     events: 'Events',
     ptm: 'PTM',
-    teachers: 'Teachers',
-    students: 'Students',
-    settings: 'Settings',
-    logout: 'Logout',
-    search: 'Search',
-    welcome: 'Welcome back',
-    today: 'Today',
-    upcoming: 'Upcoming',
+    notifications: 'Notifications',
     notices: 'Notices',
-    schoolManagement: 'School Management'
+    ai: 'Study AI',
+    profile: 'Profile',
+    settings: 'Settings',
+    students: 'Students',
+    teachers: 'Teachers',
+    schoolManagement: 'School Management',
+    logout: 'Logout',
   },
 
   hi: {
     home: 'होम',
-    academics: 'अकादमिक',
-    notifications: 'सूचनाएँ',
-    ai: 'स्टडी AI',
-    profile: 'प्रोफ़ाइल',
     homework: 'होमवर्क',
     attendance: 'उपस्थिति',
     exams: 'परीक्षाएँ',
@@ -41,20 +55,27 @@ export const translations = {
     leave: 'अवकाश',
     events: 'कार्यक्रम',
     ptm: 'PTM',
-    teachers: 'शिक्षक',
-    students: 'विद्यार्थी',
+    notifications: 'सूचनाएँ',
+    notices: 'नोटिस',
+    ai: 'स्टडी AI',
+    profile: 'प्रोफ़ाइल',
     settings: 'सेटिंग्स',
-    logout: 'लॉगआउट',
-    search: 'खोजें',
-    welcome: 'वापसी पर स्वागत है',
-    today: 'आज',
-    upcoming: 'आगामी',
-    notices: 'सूचनाएँ',
-    schoolManagement: 'स्कूल प्रबंधन'
-  }
-} as const;
+    students: 'विद्यार्थी',
+    teachers: 'शिक्षक',
+    schoolManagement: 'स्कूल प्रबंधन',
+    logout: 'लॉग आउट',
+  },
+};
 
-export const t = (
+export function t(
   lang: Language,
-  key: keyof typeof translations.en
-) => translations[lang][key];
+  key: TranslationKey | string,
+): string {
+  const dictionary = translations[lang];
+
+  return (
+    dictionary[key as TranslationKey] ??
+    translations.en[key as TranslationKey] ??
+    key
+  );
+}
