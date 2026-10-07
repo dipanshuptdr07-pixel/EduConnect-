@@ -27,11 +27,11 @@ function normalizePhone(value: string) {
   return `+${digits}`;
 }
 
-function safeEmailPart(value: string) {
+function safePart(value: string) {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '')
-    .slice(0, 40);
+    .slice(0, 30);
 }
 
 serve(async (req) => {
@@ -54,8 +54,7 @@ serve(async (req) => {
       throw new Error('Server configuration is incomplete.');
     }
 
-    const authorization =
-      req.headers.get('Authorization') ?? '';
+    const authorization = req.headers.get('Authorization') ?? '';
 
     if (!authorization.startsWith('Bearer ')) {
       return json({ error: 'Unauthorized' }, 401);
@@ -79,10 +78,10 @@ serve(async (req) => {
 
     const {
       data: { user },
-      error: userError,
+      error: authError,
     } = await authClient.auth.getUser();
 
-    if (userError || !user) {
+    if (authError || !user) {
       return json({ error: 'Unauthorized' }, 401);
     }
 
@@ -97,48 +96,78 @@ serve(async (req) => {
       },
     );
 
-    const { data: owner, error: ownerError } =
+    const { data: admin, error: adminError } =
       await service
-        .from('platform_owners')
-        .select('id, is_active')
+        .from('profiles')
+        .select(
+          'id, school_id, role, is_active, full_name, phone',
+        )
         .eq('id', user.id)
         .maybeSingle();
 
     if (
-      ownerError ||
-      !owner ||
-      owner.is_active !== true
+      adminError ||
+      !admin ||
+      admin.role !== 'ADMIN' ||
+      admin.is_active !== true
     ) {
       return json(
-        { error: 'Platform owner access required.' },
+        { error: 'Active school admin access required.' },
         403,
       );
     }
 
     const input = await req.json();
 
-    const schoolId = String(input.school_id ?? '').trim();
+    const role = String(input.role ?? '').toUpperCase();
     const fullName = String(input.full_name ?? '').trim();
-    const phone = normalizePhone(String(input.phone ?? ''));
+    const rawPhone = String(input.phone ?? '').trim();
     const password = String(input.password ?? '');
 
-    if (!schoolId) {
-      return json({ error: 'school_id is required.' }, 400);
+    // IMPORTANT:
+    // Never trust school_id sent by frontend.
+    // Always use the logged-in admin's school.
+    const schoolId = admin.school_id;
+
+    if (!['STUDENT', 'TEACHER'].includes(role)) {
+      return json(
+        {
+          error:
+            'Only STUDENT or TEACHER accounts can be created here.',
+        },
+        400,
+      );
     }
 
     if (fullName.length < 2) {
-      return json({ error: 'Valid admin name is required.' }, 400);
+      return json(
+        { error: 'Valid full name is required.' },
+        400,
+      );
     }
 
+    const phone = normalizePhone(rawPhone);
     const phoneDigits = phone.replace(/\D/g, '');
 
-    if (phoneDigits.length < 10) {
-      return json({ error: 'Valid phone number is required.' }, 400);
+    if (
+      phoneDigits.length !== 10 &&
+      !(
+        phoneDigits.length === 12 &&
+        phoneDigits.startsWith('91')
+      )
+    ) {
+      return json(
+        { error: 'Valid Indian phone number is required.' },
+        400,
+      );
     }
 
-    if (password.length < 8) {
+    if (password.length < 6) {
       return json(
-        { error: 'Password must contain at least 8 characters.' },
+        {
+          error:
+            'Password must contain at least 6 characters.',
+        },
         400,
       );
     }
@@ -161,22 +190,219 @@ serve(async (req) => {
       );
     }
 
-    const validation = await service.rpc(
-      'validate_school_admin_setup',
-      {
-        p_school_id: schoolId,
-        p_full_name: fullName,
-        p_phone: phone,
-        p_password: password,
-      },
-    );
+    /*
+     * =========================================================
+     * STUDENT
+     * =========================================================
+     */
 
-    if (validation.error) {
-      throw validation.error;
+    if (role === 'STUDENT') {
+      const classId =
+        String(input.class_id ?? '').trim() || null;
+
+      const sectionId =
+        String(input.section_id ?? '').trim() || null;
+
+      const streamId =
+        String(input.stream_id ?? '').trim() || null;
+
+      const admissionNo =
+        String(input.admission_no ?? '').trim();
+
+      if (!admissionNo) {
+        return json(
+          { error: 'Admission number is required.' },
+          400,
+        );
+      }
+
+      if (!classId || !sectionId) {
+        return json(
+          {
+            error:
+              'Class and section are required.',
+          },
+          400,
+        );
+      }
+
+      const { data: classRow } =
+        await service
+          .from('classes')
+          .select('id, school_id')
+          .eq('id', classId)
+          .eq('school_id', schoolId)
+          .maybeSingle();
+
+      if (!classRow) {
+        return json(
+          { error: 'Selected class is invalid.' },
+          400,
+        );
+      }
+
+      const { data: sectionRow } =
+        await service
+          .from('sections')
+          .select(
+            'id, school_id, class_id, stream_id',
+          )
+          .eq('id', sectionId)
+          .eq('school_id', schoolId)
+          .maybeSingle();
+
+      if (
+        !sectionRow ||
+        sectionRow.class_id !== classId
+      ) {
+        return json(
+          {
+            error:
+              'Selected section is invalid for this class.',
+          },
+          400,
+        );
+      }
+
+      if (
+        streamId &&
+        sectionRow.stream_id &&
+        sectionRow.stream_id !== streamId
+      ) {
+        return json(
+          {
+            error:
+              'Selected stream does not match the section.',
+          },
+          400,
+        );
+      }
+
+      const { data: existingAdmission } =
+        await service
+          .from('student_profiles')
+          .select('id')
+          .eq('school_id', schoolId)
+          .eq('admission_no', admissionNo)
+          .maybeSingle();
+
+      if (existingAdmission) {
+        return json(
+          {
+            error:
+              'Admission number already exists.',
+          },
+          409,
+        );
+      }
+
+      const email =
+        `student.${safePart(school.code)}.` +
+        `${crypto.randomUUID().replaceAll('-', '')}` +
+        `@accounts.educonnect.app`;
+
+      const {
+        data: created,
+        error: createError,
+      } = await service.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          account_type: 'STUDENT',
+          school_id: schoolId,
+        },
+      });
+
+      if (createError || !created.user) {
+        throw (
+          createError ??
+          new Error('Auth user creation failed.')
+        );
+      }
+
+      createdUserId = created.user.id;
+
+      const { error: profileError } =
+        await service
+          .from('profiles')
+          .insert({
+            id: createdUserId,
+            school_id: schoolId,
+            role: 'STUDENT',
+            full_name: fullName,
+            phone,
+            auth_email: email,
+            is_active: true,
+          });
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const { error: studentError } =
+        await service
+          .from('student_profiles')
+          .insert({
+            school_id: schoolId,
+            profile_id: createdUserId,
+            admission_no: admissionNo,
+            class_id: classId,
+            section_id: sectionId,
+            stream_id: streamId,
+            login_phone: phone,
+            account_status: 'ACTIVE',
+          });
+
+      if (studentError) {
+        throw studentError;
+      }
+
+      return json({
+        ok: true,
+        user_id: createdUserId,
+        role: 'STUDENT',
+        school_id: schoolId,
+      });
+    }
+
+    /*
+     * =========================================================
+     * TEACHER
+     * =========================================================
+     */
+
+    const employeeNo =
+      String(input.employee_no ?? '').trim();
+
+    if (!employeeNo) {
+      return json(
+        { error: 'Employee number is required.' },
+        400,
+      );
+    }
+
+    const { data: existingEmployee } =
+      await service
+        .from('teacher_profiles')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('employee_no', employeeNo)
+        .maybeSingle();
+
+    if (existingEmployee) {
+      return json(
+        {
+          error:
+            'Employee number already exists.',
+        },
+        409,
+      );
     }
 
     const email =
-      `admin.${safeEmailPart(school.code)}.${phoneDigits}` +
+      `teacher.${safePart(school.code)}.` +
+      `${crypto.randomUUID().replaceAll('-', '')}` +
       `@accounts.educonnect.app`;
 
     const {
@@ -187,17 +413,16 @@ serve(async (req) => {
       password,
       email_confirm: true,
       user_metadata: {
-        account_type: 'SCHOOL_ADMIN',
+        account_type: 'TEACHER',
         school_id: schoolId,
       },
     });
 
-    if (createError) {
-      throw createError;
-    }
-
-    if (!created.user) {
-      throw new Error('Auth user creation failed.');
+    if (createError || !created.user) {
+      throw (
+        createError ??
+        new Error('Auth user creation failed.')
+      );
     }
 
     createdUserId = created.user.id;
@@ -208,7 +433,7 @@ serve(async (req) => {
         .insert({
           id: createdUserId,
           school_id: schoolId,
-          role: 'ADMIN',
+          role: 'TEACHER',
           full_name: fullName,
           phone,
           auth_email: email,
@@ -219,38 +444,69 @@ serve(async (req) => {
       throw profileError;
     }
 
-    const { error: adminError } =
-      await service
-        .from('school_admins')
-        .insert({
-          school_id: schoolId,
-          profile_id: createdUserId,
-          is_primary: true,
-        });
+    const {
+      data: teacher,
+      error: teacherError,
+    } = await service
+      .from('teacher_profiles')
+      .insert({
+        school_id: schoolId,
+        profile_id: createdUserId,
+        employee_no: employeeNo,
+      })
+      .select('id')
+      .single();
 
-    if (adminError) {
-      throw adminError;
+    if (teacherError || !teacher) {
+      throw (
+        teacherError ??
+        new Error(
+          'Teacher profile creation failed.',
+        )
+      );
     }
 
-    await service.rpc(
-      'initialize_school_settings',
-      {
-        p_school_id: schoolId,
-      },
-    );
+    const { error: permissionError } =
+      await service
+        .from('teacher_permissions')
+        .insert({
+          school_id: schoolId,
+          teacher_id: teacher.id,
+          can_manage_students: false,
+          can_manage_attendance: true,
+          can_manage_homework: true,
+          can_manage_results: false,
+          can_manage_notices: false,
+          can_manage_ptm: false,
+        });
+
+    if (permissionError) {
+      throw permissionError;
+    }
 
     return json({
       ok: true,
       user_id: createdUserId,
+      role: 'TEACHER',
       school_id: schoolId,
-      role: 'ADMIN',
     });
   } catch (error) {
+    /*
+     * Best-effort rollback.
+     */
     if (createdUserId) {
       try {
-        const service = createClient(
-          Deno.env.get('SUPABASE_URL')!,
-          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+        const supabaseUrl =
+          Deno.env.get('SUPABASE_URL')!;
+
+        const serviceRoleKey =
+          Deno.env.get(
+            'SUPABASE_SERVICE_ROLE_KEY',
+          )!;
+
+        const cleanup = createClient(
+          supabaseUrl,
+          serviceRoleKey,
           {
             auth: {
               persistSession: false,
@@ -259,11 +515,26 @@ serve(async (req) => {
           },
         );
 
-        await service.auth.admin.deleteUser(
+        await cleanup
+          .from('student_profiles')
+          .delete()
+          .eq('profile_id', createdUserId);
+
+        await cleanup
+          .from('teacher_profiles')
+          .delete()
+          .eq('profile_id', createdUserId);
+
+        await cleanup
+          .from('profiles')
+          .delete()
+          .eq('id', createdUserId);
+
+        await cleanup.auth.admin.deleteUser(
           createdUserId,
         );
       } catch {
-        // Cleanup is best-effort.
+        // Best-effort cleanup only.
       }
     }
 
