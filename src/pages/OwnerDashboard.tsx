@@ -1,7 +1,31 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { createSchool, getSchools } from '../lib/api';
+import { supabase } from '../lib/supabase';
 import type { School } from '../lib/types';
+import { Modal } from '../components/Modal';
+
+type SchoolForm = {
+  name: string;
+  address: string;
+  city: string;
+  state: string;
+  contactPhone: string;
+  contactEmail: string;
+  academicYear: string;
+  status: string;
+};
+
+const emptyForm: SchoolForm = {
+  name: '',
+  address: '',
+  city: '',
+  state: '',
+  contactPhone: '',
+  contactEmail: '',
+  academicYear: '2026-27',
+  status: 'ACTIVE',
+};
 
 export default function OwnerDashboard() {
   const { owner, signOut } = useAuth();
@@ -10,9 +34,14 @@ export default function OwnerDashboard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showAddSchool, setShowAddSchool] = useState(false);
+
+  const [editingSchool, setEditingSchool] = useState<School | null>(null);
+  const [editForm, setEditForm] = useState<SchoolForm>(emptyForm);
+  const [editSaving, setEditSaving] = useState(false);
+
   const [error, setError] = useState('');
 
-  const [form, setForm] = useState({
+  const [addForm, setAddForm] = useState({
     code: '',
     name: '',
     address: '',
@@ -27,6 +56,7 @@ export default function OwnerDashboard() {
     try {
       setLoading(true);
       setError('');
+
       const data = await getSchools();
       setSchools(data);
     } catch (err: any) {
@@ -43,7 +73,7 @@ export default function OwnerDashboard() {
   const submitSchool = async (event: React.FormEvent) => {
     event.preventDefault();
 
-    if (!form.code.trim() || !form.name.trim()) {
+    if (!addForm.code.trim() || !addForm.name.trim()) {
       setError('School Code and School Name are required.');
       return;
     }
@@ -52,18 +82,9 @@ export default function OwnerDashboard() {
       setSaving(true);
       setError('');
 
-      await createSchool({
-        code: form.code,
-        name: form.name,
-        address: form.address,
-        city: form.city,
-        state: form.state,
-        contactPhone: form.contactPhone,
-        contactEmail: form.contactEmail,
-        academicYear: form.academicYear,
-      });
+      await createSchool(addForm);
 
-      setForm({
+      setAddForm({
         code: '',
         name: '',
         address: '',
@@ -75,6 +96,7 @@ export default function OwnerDashboard() {
       });
 
       setShowAddSchool(false);
+
       await loadSchools();
     } catch (err: any) {
       setError(err?.message || 'Could not create school.');
@@ -83,37 +105,92 @@ export default function OwnerDashboard() {
     }
   };
 
+  const openEdit = (school: School) => {
+    setEditingSchool(school);
+
+    setEditForm({
+      name: school.name ?? '',
+      address: school.address ?? '',
+      city: school.city ?? '',
+      state: school.state ?? '',
+      contactPhone: school.contact_phone ?? '',
+      contactEmail: school.contact_email ?? '',
+      academicYear: school.academic_year ?? '',
+      status: (school.status || 'ACTIVE').toUpperCase(),
+    });
+
+    setError('');
+  };
+
+  const saveEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!editingSchool) return;
+
+    if (!editForm.name.trim()) {
+      setError('School Name is required.');
+      return;
+    }
+
+    try {
+      setEditSaving(true);
+      setError('');
+
+      const { error: updateError } = await supabase
+        .from('schools')
+        .update({
+          name: editForm.name.trim(),
+          address: editForm.address.trim() || null,
+          city: editForm.city.trim() || null,
+          state: editForm.state.trim() || null,
+          contact_phone: editForm.contactPhone.trim() || null,
+          contact_email: editForm.contactEmail.trim() || null,
+          academic_year: editForm.academicYear.trim() || null,
+          status: editForm.status,
+        })
+        .eq('id', editingSchool.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setEditingSchool(null);
+
+      await loadSchools();
+    } catch (err: any) {
+      setError(err?.message || 'Could not update school.');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const activeSchools = schools.filter(
-    (school) => (school.status || 'ACTIVE').toUpperCase() === 'ACTIVE',
+    (school) =>
+      (school.status || 'ACTIVE').toUpperCase() === 'ACTIVE',
   ).length;
 
   const suspendedSchools = schools.filter(
-    (school) => (school.status || '').toUpperCase() === 'SUSPENDED',
+    (school) =>
+      (school.status || '').toUpperCase() === 'SUSPENDED',
   ).length;
 
   if (!owner) {
     return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          padding: 24,
-        }}
-      >
+      <div className="auth-page">
         <div
+          className="panel"
           style={{
             maxWidth: 420,
-            width: '100%',
-            padding: 28,
-            borderRadius: 20,
-            border: '1px solid var(--border, #e5e7eb)',
-            background: 'var(--card, #fff)',
+            margin: '40px auto',
             textAlign: 'center',
+            padding: 24,
           }}
         >
           <h2>Owner Access Required</h2>
-          <p>Please sign in with the platform owner account.</p>
+
+          <p className="muted">
+            Please sign in with the platform owner account.
+          </p>
         </div>
       </div>
     );
@@ -124,15 +201,17 @@ export default function OwnerDashboard() {
       style={{
         minHeight: '100vh',
         background: 'var(--background, #f6f8fc)',
-        color: 'var(--foreground, #111827)',
       }}
     >
+      {/* HEADER */}
+
       <header
         style={{
           position: 'sticky',
           top: 0,
           zIndex: 20,
-          borderBottom: '1px solid var(--border, #e5e7eb)',
+          borderBottom:
+            '1px solid var(--border, #e5e7eb)',
           background: 'var(--card, #fff)',
         }}
       >
@@ -151,97 +230,91 @@ export default function OwnerDashboard() {
             <div
               style={{
                 fontSize: 13,
-                fontWeight: 700,
+                fontWeight: 800,
                 color: '#2563eb',
-                letterSpacing: 0.5,
               }}
             >
               EDUCONNECT
             </div>
 
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 850,
+              }}
+            >
               Platform Owner
             </div>
           </div>
 
           <button
+            className="secondary"
             type="button"
             onClick={signOut}
-            style={{
-              border: '1px solid var(--border, #e5e7eb)',
-              background: 'transparent',
-              borderRadius: 10,
-              padding: '9px 14px',
-              cursor: 'pointer',
-              fontWeight: 700,
-            }}
           >
             Logout
           </button>
         </div>
       </header>
 
+      {/* MAIN */}
+
       <main
         style={{
           maxWidth: 1200,
           margin: '0 auto',
-          padding: '24px 20px 48px',
+          padding: '24px 16px 48px',
         }}
       >
+        {/* WELCOME */}
+
         <section style={{ marginBottom: 24 }}>
-          <div
-            style={{
-              fontSize: 14,
-              color: 'var(--muted-foreground, #6b7280)',
-              marginBottom: 4,
-            }}
-          >
+          <div className="muted">
             Welcome back
           </div>
 
           <h1
             style={{
-              margin: 0,
+              margin: '4px 0 0',
               fontSize: 'clamp(26px, 5vw, 38px)',
-              fontWeight: 850,
             }}
           >
             {owner.full_name}
           </h1>
 
-          <p
-            style={{
-              marginTop: 8,
-              color: 'var(--muted-foreground, #6b7280)',
-            }}
-          >
+          <p className="muted">
             Manage all EduConnect schools from one place.
           </p>
         </section>
 
+        {/* ERROR */}
+
         {error && (
           <div
             style={{
-              marginBottom: 20,
-              padding: 14,
-              borderRadius: 12,
+              marginBottom: 18,
+              padding: 13,
+              borderRadius: 10,
               background: '#fef2f2',
               color: '#b91c1c',
               border: '1px solid #fecaca',
-              fontSize: 14,
-              fontWeight: 600,
+              fontSize: 13,
+              fontWeight: 700,
             }}
           >
             {error}
           </div>
         )}
 
+        {/* STATS */}
+
         <section
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gridTemplateColumns:
+              'repeat(auto-fit, minmax(170px, 1fr))',
             gap: 14,
-            marginBottom: 28,
+            marginBottom: 24,
           }}
         >
           <Stat
@@ -263,18 +336,19 @@ export default function OwnerDashboard() {
           />
         </section>
 
+        {/* SCHOOLS */}
+
         <section
+          className="panel"
           style={{
-            borderRadius: 20,
-            border: '1px solid var(--border, #e5e7eb)',
-            background: 'var(--card, #fff)',
             overflow: 'hidden',
           }}
         >
           <div
             style={{
               padding: 18,
-              borderBottom: '1px solid var(--border, #e5e7eb)',
+              borderBottom:
+                '1px solid var(--border, #e5e7eb)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
@@ -283,230 +357,203 @@ export default function OwnerDashboard() {
             }}
           >
             <div>
-              <h2 style={{ margin: 0, fontSize: 20 }}>
+              <h2 style={{ margin: 0 }}>
                 Schools
               </h2>
 
               <p
+                className="muted"
                 style={{
                   margin: '5px 0 0',
                   fontSize: 13,
-                  color: 'var(--muted-foreground, #6b7280)',
                 }}
               >
-                Create and manage school tenants.
+                View and manage school tenants.
               </p>
             </div>
 
             <button
+              className="primary"
               type="button"
               onClick={() => {
                 setError('');
                 setShowAddSchool((value) => !value);
-              }}
-              style={{
-                border: 0,
-                background: '#2563eb',
-                color: '#fff',
-                borderRadius: 11,
-                padding: '11px 16px',
-                fontWeight: 800,
-                cursor: 'pointer',
               }}
             >
               + Add New School
             </button>
           </div>
 
+          {/* ADD SCHOOL FORM */}
+
           {showAddSchool && (
             <form
               onSubmit={submitSchool}
               style={{
                 padding: 18,
-                borderBottom: '1px solid var(--border, #e5e7eb)',
-                background: 'var(--background, #f8fafc)',
+                borderBottom:
+                  '1px solid var(--border, #e5e7eb)',
+                background:
+                  'var(--background, #f8fafc)',
               }}
             >
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns:
-                    'repeat(auto-fit, minmax(220px, 1fr))',
-                  gap: 14,
-                }}
-              >
+              <div className="form-grid">
                 <Field
                   label="School Code *"
-                  value={form.code}
+                  value={addForm.code}
                   placeholder="EDU002"
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       code: value.toUpperCase(),
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="School Name *"
-                  value={form.name}
-                  placeholder="ABC Public School"
+                  value={addForm.name}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       name: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="Address"
-                  value={form.address}
-                  placeholder="School address"
+                  value={addForm.address}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       address: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="City"
-                  value={form.city}
-                  placeholder="Indore"
+                  value={addForm.city}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       city: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="State"
-                  value={form.state}
-                  placeholder="Madhya Pradesh"
+                  value={addForm.state}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       state: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="Contact Phone"
-                  value={form.contactPhone}
-                  placeholder="+91..."
+                  value={addForm.contactPhone}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       contactPhone: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="Contact Email"
-                  value={form.contactEmail}
-                  placeholder="school@example.com"
                   type="email"
+                  value={addForm.contactEmail}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       contactEmail: value,
-                    }))
+                    })
                   }
                 />
 
                 <Field
                   label="Academic Year"
-                  value={form.academicYear}
-                  placeholder="2026-27"
+                  value={addForm.academicYear}
                   onChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
+                    setAddForm({
+                      ...addForm,
                       academicYear: value,
-                    }))
+                    })
                   }
                 />
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: 10,
-                  marginTop: 18,
-                  flexWrap: 'wrap',
-                }}
-              >
+              <div className="modal-actions">
                 <button
+                  className="secondary"
                   type="button"
-                  onClick={() => setShowAddSchool(false)}
-                  style={{
-                    padding: '11px 16px',
-                    borderRadius: 10,
-                    border: '1px solid var(--border, #d1d5db)',
-                    background: 'transparent',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
+                  onClick={() =>
+                    setShowAddSchool(false)
+                  }
                 >
                   Cancel
                 </button>
 
                 <button
+                  className="primary"
                   type="submit"
                   disabled={saving}
-                  style={{
-                    padding: '11px 18px',
-                    borderRadius: 10,
-                    border: 0,
-                    background: '#2563eb',
-                    color: '#fff',
-                    fontWeight: 800,
-                    cursor: saving ? 'wait' : 'pointer',
-                    opacity: saving ? 0.7 : 1,
-                  }}
                 >
-                  {saving ? 'Creating...' : 'Create School'}
+                  {saving
+                    ? 'Creating...'
+                    : 'Create School'}
                 </button>
               </div>
             </form>
           )}
 
+          {/* SCHOOL LIST */}
+
           {loading ? (
-            <div style={{ padding: 30, textAlign: 'center' }}>
+            <div
+              style={{
+                padding: 30,
+                textAlign: 'center',
+              }}
+            >
               Loading schools...
             </div>
           ) : schools.length === 0 ? (
             <div
+              className="muted"
               style={{
                 padding: 40,
                 textAlign: 'center',
-                color: 'var(--muted-foreground, #6b7280)',
               }}
             >
               No schools found.
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                width: '100%',
+                overflowX: 'auto',
+              }}
+            >
               <table
                 style={{
                   width: '100%',
                   borderCollapse: 'collapse',
-                  minWidth: 650,
+                  minWidth: 520,
                 }}
               >
                 <thead>
                   <tr>
                     <Th>School</Th>
                     <Th>Code</Th>
-                    <Th>Location</Th>
-                    <Th>Academic Year</Th>
                     <Th>Status</Th>
+                    <Th>Actions</Th>
                   </tr>
                 </thead>
 
@@ -514,27 +561,32 @@ export default function OwnerDashboard() {
                   {schools.map((school) => (
                     <tr key={school.id}>
                       <Td>
-                        <strong>{school.name}</strong>
+                        <strong>
+                          {school.name}
+                        </strong>
+
+                        <div
+                          className="muted"
+                          style={{
+                            fontSize: 12,
+                            marginTop: 3,
+                          }}
+                        >
+                          {[school.city, school.state]
+                            .filter(Boolean)
+                            .join(', ') || 'Location not set'}
+                        </div>
                       </Td>
 
                       <Td>
-                        <span
+                        <strong
                           style={{
-                            fontWeight: 800,
                             color: '#2563eb',
                           }}
                         >
                           {school.code}
-                        </span>
+                        </strong>
                       </Td>
-
-                      <Td>
-                        {[school.city, school.state]
-                          .filter(Boolean)
-                          .join(', ') || '—'}
-                      </Td>
-
-                      <Td>{school.academic_year || '—'}</Td>
 
                       <Td>
                         <span
@@ -545,17 +597,32 @@ export default function OwnerDashboard() {
                             fontSize: 12,
                             fontWeight: 800,
                             background:
-                              (school.status || 'ACTIVE') === 'ACTIVE'
-                                ? '#dcfce7'
-                                : '#fee2e2',
+                              school.status ===
+                              'SUSPENDED'
+                                ? '#fee2e2'
+                                : '#dcfce7',
                             color:
-                              (school.status || 'ACTIVE') === 'ACTIVE'
-                                ? '#166534'
-                                : '#991b1b',
+                              school.status ===
+                              'SUSPENDED'
+                                ? '#b91c1c'
+                                : '#166534',
                           }}
                         >
-                          {school.status || 'ACTIVE'}
+                          {school.status ||
+                            'ACTIVE'}
                         </span>
+                      </Td>
+
+                      <Td>
+                        <button
+                          className="secondary small"
+                          type="button"
+                          onClick={() =>
+                            openEdit(school)
+                          }
+                        >
+                          Edit
+                        </button>
                       </Td>
                     </tr>
                   ))}
@@ -565,9 +632,166 @@ export default function OwnerDashboard() {
           )}
         </section>
       </main>
+
+      {/* EDIT SCHOOL MODAL */}
+
+      <Modal
+        open={Boolean(editingSchool)}
+        title={
+          editingSchool
+            ? `Edit ${editingSchool.name}`
+            : 'Edit School'
+        }
+        onClose={() =>
+          !editSaving &&
+          setEditingSchool(null)
+        }
+      >
+        <form onSubmit={saveEdit}>
+          <div
+            className="form-grid"
+            style={{ padding: 18 }}
+          >
+            <Field
+              label="School Code"
+              value={editingSchool?.code ?? ''}
+              disabled
+              onChange={() => {}}
+            />
+
+            <Field
+              label="School Name *"
+              value={editForm.name}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  name: value,
+                })
+              }
+            />
+
+            <Field
+              label="Address"
+              value={editForm.address}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  address: value,
+                })
+              }
+            />
+
+            <Field
+              label="City"
+              value={editForm.city}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  city: value,
+                })
+              }
+            />
+
+            <Field
+              label="State"
+              value={editForm.state}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  state: value,
+                })
+              }
+            />
+
+            <Field
+              label="Contact Phone"
+              value={editForm.contactPhone}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  contactPhone: value,
+                })
+              }
+            />
+
+            <Field
+              label="Contact Email"
+              type="email"
+              value={editForm.contactEmail}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  contactEmail: value,
+                })
+              }
+            />
+
+            <Field
+              label="Academic Year"
+              value={editForm.academicYear}
+              onChange={(value) =>
+                setEditForm({
+                  ...editForm,
+                  academicYear: value,
+                })
+              }
+            />
+
+            <label>
+              Status
+
+              <select
+                value={editForm.status}
+                onChange={(event) =>
+                  setEditForm({
+                    ...editForm,
+                    status:
+                      event.target.value,
+                  })
+                }
+              >
+                <option value="ACTIVE">
+                  Active
+                </option>
+
+                <option value="SUSPENDED">
+                  Suspended
+                </option>
+              </select>
+            </label>
+          </div>
+
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              type="button"
+              disabled={editSaving}
+              onClick={() =>
+                setEditingSchool(null)
+              }
+            >
+              Cancel
+            </button>
+
+            <button
+              className="primary"
+              type="submit"
+              disabled={editSaving}
+            >
+              {editSaving
+                ? 'Saving...'
+                : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
+
+/* =========================
+   SMALL COMPONENTS
+========================= */
 
 function Stat({
   title,
@@ -580,17 +804,15 @@ function Stat({
 }) {
   return (
     <div
+      className="panel"
       style={{
         padding: 18,
-        borderRadius: 18,
-        border: '1px solid var(--border, #e5e7eb)',
-        background: 'var(--card, #fff)',
       }}
     >
       <div
+        className="muted"
         style={{
           fontSize: 13,
-          color: 'var(--muted-foreground, #6b7280)',
           fontWeight: 700,
         }}
       >
@@ -608,9 +830,9 @@ function Stat({
       </div>
 
       <div
+        className="muted"
         style={{
           fontSize: 12,
-          color: 'var(--muted-foreground, #6b7280)',
           marginTop: 3,
         }}
       >
@@ -625,56 +847,43 @@ function Field({
   value,
   placeholder,
   type = 'text',
+  disabled = false,
   onChange,
 }: {
   label: string;
   value: string;
   placeholder?: string;
   type?: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
-    <label style={{ display: 'block' }}>
-      <span
-        style={{
-          display: 'block',
-          fontSize: 13,
-          fontWeight: 750,
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </span>
+    <label>
+      {label}
 
       <input
         type={type}
         value={value}
         placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        style={{
-          width: '100%',
-          boxSizing: 'border-box',
-          padding: '11px 12px',
-          borderRadius: 10,
-          border: '1px solid var(--border, #d1d5db)',
-          background: 'var(--card, #fff)',
-          color: 'inherit',
-          outline: 'none',
-        }}
+        disabled={disabled}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
       />
     </label>
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <th
       style={{
         textAlign: 'left',
         padding: '12px 14px',
-        fontSize: 12,
-        color: 'var(--muted-foreground, #6b7280)',
-        borderBottom: '1px solid var(--border, #e5e7eb)',
         whiteSpace: 'nowrap',
       }}
     >
@@ -683,17 +892,21 @@ function Th({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Td({ children }: { children: React.ReactNode }) {
+function Td({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <td
       style={{
         padding: '14px',
-        fontSize: 14,
-        borderBottom: '1px solid var(--border, #e5e7eb)',
         verticalAlign: 'middle',
+        borderTop:
+          '1px solid var(--border, #e5e7eb)',
       }}
     >
       {children}
     </td>
   );
-  }
+}
